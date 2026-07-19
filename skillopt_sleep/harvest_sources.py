@@ -17,13 +17,12 @@ def harvest_for_config(cfg, *, since_iso: Optional[str] = None, limit: int = 0) 
     invoked_project = cfg.get("invoked_project", "")
 
     if source == "hermes":
-        hermes_home = cfg.get("hermes_home", os.path.expanduser("~/.hermes"))
         return harvest_hermes(
             scope=scope,
             invoked_project=invoked_project,
             since_iso=since_iso,
             limit=limit,
-            db_path=os.path.join(hermes_home, "state.db"),
+            hermes_home=cfg.get("hermes_home", os.path.expanduser("~/.hermes")),
         )
     if source == "codex":
         return harvest_codex(

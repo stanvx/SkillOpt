@@ -1,6 +1,6 @@
 ---
 name: skillopt-sleep-hermes
-description: "Use when the user wants their Hermes Agent to self-improve from past usage, asks about a nightly/offline 'sleep' cycle for Hermes, wants Hermes to review past sessions, learn preferences, or consolidate memory/skills, or to run dry-run/run/adopt/status for SkillOpt-Sleep against Hermes. Drives the skillopt_sleep engine with --source hermes and --backend hermes: harvest past Hermes sessions from ~/.hermes/state.db -> mine recurring tasks -> replay through the Hermes CLI -> stage validated skill/memory edits behind a held-out gate."
+description: "Use when the user wants their Hermes Agent to self-improve from past usage, asks about a nightly/offline 'sleep' cycle for Hermes, wants Hermes to review past sessions, learn preferences, or consolidate memory/skills, or to run dry-run/run/adopt/status for SkillOpt-Sleep against Hermes. Drives the skillopt_sleep engine with --source hermes and --backend hermes: harvest past Hermes sessions via `hermes sessions export` -> mine recurring tasks -> replay through the Hermes CLI -> stage validated skill/memory edits behind a held-out gate."
 ---
 
 # SkillOpt-Sleep: usage-driven self-evolution for a Hermes Agent
@@ -13,6 +13,8 @@ score. Live files change only through an explicit `adopt`, which backs up first.
 
 Hermes is first-class here: the harvester and backend live in the shared engine
 (`skillopt_sleep/harvest_hermes.py`, `HermesBackend`), so the standard CLI works.
+The harvester uses `hermes sessions export` rather than reading the state DB, so
+it survives Hermes schema changes and reuses Hermes's own secret redaction.
 
 ## Actions
 

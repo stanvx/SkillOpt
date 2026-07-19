@@ -7,9 +7,11 @@ the shared CLI, alongside `claude` and `codex`.
 
 ## What you get
 
-- **Harvester** (`skillopt_sleep/harvest_hermes.py`) — reads the Hermes state DB
-  (`~/.hermes/state.db`), normalizes sessions into `SessionDigest` records, redacts
-  secrets, and skips the engine's own throwaway sessions.
+- **Harvester** (`skillopt_sleep/harvest_hermes.py`) — shells out to the stable
+  `hermes sessions export --format jsonl --redact` interface (schema-drift-proof,
+  WAL-safe, self-redacting), normalizes sessions into `SessionDigest` records,
+  layers its own sanitization, and skips the engine's own throwaway sessions.
+  Warns loudly (never silently) when nothing is harvestable.
 - **Backend** (`HermesBackend` in `skillopt_sleep/backend.py`) — drives
   `hermes --profile <name> chat -Q -q "<prompt>"` for the replay/reflect phases.
 - **MCP server** (`mcp_server.py`) — exposes the cycle as MCP tools with Hermes
@@ -19,7 +21,9 @@ the shared CLI, alongside `claude` and `codex`.
 
 - Python 3.10+
 - The `hermes` CLI installed and authenticated, with at least one profile.
-- Past Hermes sessions in `~/.hermes/state.db` (override with `HERMES_HOME`).
+- Past Hermes **CLI** sessions with message content (`hermes sessions list` should
+  show non-empty sessions; ACP/editor-bridge sessions carry no harvestable turns).
+  Override the home with `HERMES_HOME`.
 
 ## Quick start
 

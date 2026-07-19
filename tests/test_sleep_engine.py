@@ -1487,172 +1487,156 @@ class TestDiagnosticsRedaction(unittest.TestCase):
 
 
 class TestHermesHarvest(unittest.TestCase):
-    """Hermes session harvesting: DB queries, filtering, redaction, feedback."""
+    """Hermes harvesting via the `hermes sessions export` shim (mocked)."""
 
-    def _create_state_db(self, tmp: str) -> str:
-        db = os.path.join(tmp, "state.db")
-        conn = sqlite3.connect(db)
-        conn.execute(
-            "CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, title TEXT, "
-            "started_at REAL, ended_at REAL, model TEXT)"
-        )
-        conn.execute(
-            "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, "
-            "role TEXT, content TEXT, tool_name TEXT, timestamp REAL)"
-        )
-        conn.commit()
-        conn.close()
-        return db
+    def _sessions_jsonl(self, sessions) -> str:
+        return "\n".join(json.dumps(s) for s in sessions) + "\n"
 
-    def test_harvest_returns_empty_when_no_db(self):
+    def _patch_export(self, jsonl):
+        return mock.patch("skillopt_sleep.harvest_hermes._run_export", return_value=jsonl)
+
+    def test_returns_empty_when_export_fails(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(harvest_hermes(db_path=os.path.join(tmp, "nope.db")), [])
+        with self._patch_export(None):
+            self.assertEqual(harvest_hermes(scope="all"), [])
 
-    def test_harvest_filters_engine_sessions(self):
+    def test_returns_empty_when_no_sessions(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("engine-s1", "/tmp/skillopt_sleep_hermes_abc", 1000.0, 2000.0),
-            )
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("real-s1", "/home/user/project", 1000.0, 2000.0),
-            )
-            conn.executemany(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                [("real-s1", "user", "hello"), ("real-s1", "assistant", "hi")],
-            )
-            conn.commit()
-            conn.close()
-            digests = harvest_hermes(db_path=db)
+        with self._patch_export(""):
+            self.assertEqual(harvest_hermes(scope="all"), [])
 
-        self.assertEqual([d.session_id for d in digests], ["real-s1"])
-
-    def test_harvest_includes_tool_messages(self):
+    def test_builds_digest_from_export(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("s1", "/p", 1000.0, 2000.0),
-            )
-            conn.executemany(
-                "INSERT INTO messages (session_id, role, content, tool_name) VALUES (?, ?, ?, ?)",
-                [
-                    ("s1", "user", "search the web", ""),
-                    ("s1", "assistant", "I will use search", ""),
-                    ("s1", "tool", '{"result": "found 42"}', "search"),
-                    ("s1", "assistant", "The answer is 42", ""),
-                ],
-            )
-            conn.commit()
-            conn.close()
-            digests = harvest_hermes(db_path=db)
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "source": "cli", "cwd": "/proj",
+            "started_at": 1000.0, "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "summarize the changelog"},
+                {"role": "assistant", "content": "done"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
+        self.assertEqual([d.session_id for d in digests], ["s1"])
+        self.assertEqual(digests[0].n_user_turns, 1)
+        self.assertEqual(digests[0].n_assistant_turns, 1)
 
-        self.assertEqual(len(digests), 1)
+    def test_normalizes_structured_content(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello there"}]},
+                {"role": "assistant", "content": "hi"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
+        self.assertIn("hello there", " ".join(digests[0].user_prompts))
+
+    def test_includes_tool_names_only(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "search the web"},
+                {"role": "assistant", "content": "using search"},
+                {"role": "tool", "content": '{"result": "found 42"}', "tool_name": "search"},
+                {"role": "assistant", "content": "the answer is 42"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
         self.assertIn("search", digests[0].tools_used)
         self.assertEqual(digests[0].n_user_turns, 1)
         self.assertEqual(digests[0].n_assistant_turns, 2)
 
-    def test_harvest_detects_feedback(self):
+    def test_detects_feedback(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("s1", "/p", 1000.0, 2000.0),
-            )
-            conn.executemany(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                [
-                    ("s1", "user", "fix the parser"),
-                    ("s1", "assistant", "fixed it"),
-                    ("s1", "user", "still broken, please fix properly"),
-                    ("s1", "assistant", "ok now really fixed"),
-                    ("s1", "user", "perfect, thanks"),
-                    ("s1", "assistant", "you're welcome"),
-                ],
-            )
-            conn.commit()
-            conn.close()
-            digests = harvest_hermes(db_path=db)
-
-        sigs = digests[0].feedback_signals
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "fix the parser"},
+                {"role": "assistant", "content": "fixed it"},
+                {"role": "user", "content": "still broken, please fix properly"},
+                {"role": "assistant", "content": "ok now really fixed"},
+                {"role": "user", "content": "perfect, thanks"},
+                {"role": "assistant", "content": "welcome"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            sigs = harvest_hermes(scope="all")[0].feedback_signals
         self.assertTrue(any(s.startswith("neg:") for s in sigs), sigs)
         self.assertTrue(any(s.startswith("pos:") for s in sigs), sigs)
 
-    def test_harvest_redacts_secrets(self):
+    def test_redacts_secrets_defense_in_depth(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("s1", "/p", 1000.0, 2000.0),
-            )
-            conn.executemany(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                [("s1", "user", "use key sk-abc123def456ghi789jkl"), ("s1", "assistant", "ok")],
-            )
-            conn.commit()
-            conn.close()
-            digests = harvest_hermes(db_path=db)
-
-        joined = " ".join(digests[0].user_prompts)
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "use key sk-abc123def456ghi789jkl"},
+                {"role": "assistant", "content": "ok"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            joined = " ".join(harvest_hermes(scope="all")[0].user_prompts)
         self.assertIn("[REDACTED_OPENAI_KEY]", joined)
         self.assertNotIn("sk-abc123def456ghi789jkl", joined)
 
-    def test_harvest_limit_zero_is_unlimited(self):
+    def test_skips_engine_sessions(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            for i in range(5):
-                conn.execute(
-                    "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                    (f"s{i}", f"/p/{i}", 1000.0, 2000.0 + i),
-                )
-                conn.executemany(
-                    "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                    [(f"s{i}", "user", f"task {i}"), (f"s{i}", "assistant", f"done {i}")],
-                )
-            conn.commit()
-            conn.close()
-            self.assertEqual(len(harvest_hermes(db_path=db, limit=0)), 5)
-            self.assertEqual(len(harvest_hermes(db_path=db, limit=2)), 2)
+        jsonl = self._sessions_jsonl([{
+            "id": "e1", "cwd": "/tmp/skillopt_sleep_hermes_x", "ended_at": 2000.0,
+            "messages": [{"role": "user", "content": "internal"}, {"role": "assistant", "content": "x"}],
+        }])
+        with self._patch_export(jsonl):
+            self.assertEqual(harvest_hermes(scope="all"), [])
 
-    def test_harvest_sources_forwards_hermes_source(self):
+    def test_scope_invoked_filters_by_project(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([
+            {"id": "in", "cwd": "/proj", "ended_at": 2001.0,
+             "messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]},
+            {"id": "out", "cwd": "/elsewhere", "ended_at": 2002.0,
+             "messages": [{"role": "user", "content": "c"}, {"role": "assistant", "content": "d"}]},
+        ])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="invoked", invoked_project="/proj")
+        self.assertEqual([d.session_id for d in digests], ["in"])
+
+    def test_limit_and_ordering(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([
+            {"id": f"s{i}", "cwd": f"/p/{i}", "ended_at": 2000.0 + i,
+             "messages": [{"role": "user", "content": f"t{i}"}, {"role": "assistant", "content": "d"}]}
+            for i in range(5)
+        ])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all", limit=2)
+        # newest ended_at first
+        self.assertEqual([d.session_id for d in digests], ["s4", "s3"])
+
+    def test_harvest_sources_forwards_hermes(self):
         from skillopt_sleep.config import load_config
         from skillopt_sleep.harvest_sources import harvest_for_config
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = self._create_state_db(tmp)
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "INSERT INTO sessions (id, cwd, started_at, ended_at) VALUES (?, ?, ?, ?)",
-                ("s1", "/project", 1000.0, 2000.0),
-            )
-            conn.executemany(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                [("s1", "user", "hello"), ("s1", "assistant", "world")],
-            )
-            conn.commit()
-            conn.close()
-            cfg = load_config(transcript_source="hermes", hermes_home=tmp, projects="all")
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/project", "ended_at": 2000.0,
+            "messages": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}],
+        }])
+        cfg = load_config(transcript_source="hermes", projects="all")
+        with self._patch_export(jsonl):
             digests = harvest_for_config(cfg, limit=10)
-
         self.assertEqual([d.session_id for d in digests], ["s1"])
 
 
