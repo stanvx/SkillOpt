@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+import os
+
 from skillopt_sleep.harvest import harvest
 from skillopt_sleep.harvest_codex import harvest_codex
+from skillopt_sleep.harvest_hermes import harvest_hermes
 from skillopt_sleep.types import SessionDigest
 
 
@@ -13,6 +16,15 @@ def harvest_for_config(cfg, *, since_iso: Optional[str] = None, limit: int = 0) 
     scope = cfg.get("projects", "invoked")
     invoked_project = cfg.get("invoked_project", "")
 
+    if source == "hermes":
+        hermes_home = cfg.get("hermes_home", os.path.expanduser("~/.hermes"))
+        return harvest_hermes(
+            scope=scope,
+            invoked_project=invoked_project,
+            since_iso=since_iso,
+            limit=limit,
+            db_path=os.path.join(hermes_home, "state.db"),
+        )
     if source == "codex":
         return harvest_codex(
             cfg.codex_archived_sessions_dir,

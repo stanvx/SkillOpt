@@ -13,8 +13,8 @@ Common flags:
     --max-tasks N       cap mined tasks per run
     --target-skill-path PATH explicit live SKILL.md to stage/adopt
     --tasks-file PATH   reviewed TaskRecord JSON file to replay instead of harvesting
-    --backend mock|claude|codex|copilot|handoff
-    --source claude|codex|auto
+    --backend mock|claude|codex|copilot|handoff|hermes
+    --source claude|codex|hermes|auto
     --model NAME
     --lookback-hours N
     --auto-adopt
@@ -71,12 +71,12 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--scope", default="", choices=["", "all", "invoked"])
     p.add_argument("--backend", default="",
                    choices=["", "mock", "claude", "codex", "copilot", "handoff",
-                            "azure_openai"])
+                            "azure_openai", "hermes"])
     p.add_argument("--model", default="")
     p.add_argument("--codex-path", default="", help="path to the real @openai/codex binary")
     p.add_argument("--claude-home", default="", help="override ~/.claude (also isolates state)")
     p.add_argument("--codex-home", default="", help="override ~/.codex for archived session harvest")
-    p.add_argument("--source", default="", choices=["", "claude", "codex", "auto"],
+    p.add_argument("--source", default="", choices=["", "claude", "codex", "hermes", "auto"],
                    help="session transcript source")
     p.add_argument("--lookback-hours", type=int, default=None,
                    help="harvest window in hours; 0 = scan full history")

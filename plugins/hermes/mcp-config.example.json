@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "skillopt-sleep-hermes": {
+      "command": "python3",
+      "args": ["plugins/hermes/mcp_server.py"],
+      "env": {
+        "SKILLOPT_SLEEP_REPO": "${workspaceFolder}",
+        "HERMES_HOME": "~/.hermes",
+        "SKILLOPT_SLEEP_HERMES_PROFILE": "default"
+      }
+    }
+  }
+}
