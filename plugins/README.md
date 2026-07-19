@@ -10,8 +10,10 @@ runtime dependency on the paper's `skillopt/` experiment package.
 
 ## Available integrations
 
-Four integrations wrap the shared `skillopt_sleep` CLI. OpenClaw is a separate
-reference adaptation with its own backend and setup assumptions.
+Five integrations wrap the shared `skillopt_sleep` CLI. Hermes is additionally
+wired into the core engine (its harvester and backend ship in `skillopt_sleep/`,
+so `--source hermes` / `--backend hermes` work from the shared CLI). OpenClaw is
+a separate reference adaptation with its own backend and setup assumptions.
 
 | Platform | Folder | Mechanism | Status |
 |---|---|---|---|
@@ -19,6 +21,7 @@ reference adaptation with its own backend and setup assumptions.
 | **Codex** | [`codex/`](codex) | user-level skill and shared runner | installable shared-engine integration |
 | **GitHub Copilot** | [`copilot/`](copilot) | MCP server exposing seven `sleep_*` tools | shared-engine MCP integration |
 | **Devin** | [`devin/`](devin) | MCP server plus Devin transcript conversion | shared-engine MCP integration |
+| **Hermes Agent** | [`hermes/`](hermes) | core `--source`/`--backend hermes` + MCP server | first-class core integration |
 | **OpenClaw** | [`openclaw/`](openclaw) | custom DeepSeek/Ollama wrapper | independent reference adaptation; review and adapt before use |
 
 ## Install
@@ -32,6 +35,7 @@ for your workflow.
 | **Codex** | `bash plugins/codex/install.sh` | ask Codex to use the `skillopt-sleep` skill |
 | **Copilot** | register `plugins/copilot/mcp_server.py` using its example MCP config | ask Copilot to run `sleep_status` |
 | **Devin** | register `plugins/devin/mcp_server.py` using its example MCP config | ask Devin to run `sleep_status` |
+| **Hermes Agent** | register `plugins/hermes/mcp_server.py`, or run `python -m skillopt_sleep run --backend hermes --source hermes` | ask Hermes to run `sleep_status` |
 | **OpenClaw** | follow and adapt [`openclaw/README.md`](openclaw/README.md) | validate paths, credentials, and tasks locally |
 
 Python 3.10 or newer is required. Real CLI backends also require the selected
@@ -101,9 +105,9 @@ Common implemented flags include:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--backend mock\|claude\|codex\|copilot\|handoff\|azure_openai` | `mock` | select who performs model calls |
+| `--backend mock\|claude\|codex\|copilot\|handoff\|azure_openai\|hermes` | `mock` | select who performs model calls |
 | `--model NAME` | backend default | select a backend-specific model |
-| `--source claude\|codex\|auto` | `claude` | select the transcript source |
+| `--source claude\|codex\|hermes\|auto` | `claude` | select the transcript source |
 | `--project PATH` | current directory | select the project and invoked harvest scope |
 | `--scope invoked\|all` | `invoked` | limit transcript harvesting |
 | `--target-skill-path PATH` | managed skill | select a specific `SKILL.md` to stage/adopt |

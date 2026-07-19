@@ -13,8 +13,8 @@ Common flags:
     --max-tasks N       cap mined tasks per run
     --target-skill-path PATH explicit live SKILL.md to stage/adopt
     --tasks-file PATH   reviewed TaskRecord JSON file to replay instead of harvesting
-    --backend mock|claude|codex|copilot|handoff
-    --source claude|codex|auto
+    --backend mock|claude|codex|copilot|handoff|hermes
+    --source claude|codex|hermes|auto
     --model NAME
     --lookback-hours N
     --auto-adopt
@@ -71,12 +71,12 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--scope", default="", choices=["", "all", "invoked"])
     p.add_argument("--backend", default="",
                    choices=["", "mock", "claude", "codex", "copilot", "handoff",
-                            "azure_openai"])
+                            "azure_openai", "hermes"])
     p.add_argument("--model", default="")
     p.add_argument("--codex-path", default="", help="path to the real @openai/codex binary")
     p.add_argument("--claude-home", default="", help="override ~/.claude (also isolates state)")
     p.add_argument("--codex-home", default="", help="override ~/.codex for archived session harvest")
-    p.add_argument("--source", default="", choices=["", "claude", "codex", "auto"],
+    p.add_argument("--source", default="", choices=["", "claude", "codex", "hermes", "auto"],
                    help="session transcript source")
     p.add_argument("--lookback-hours", type=int, default=None,
                    help="harvest window in hours; 0 = scan full history")
@@ -87,6 +87,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="cap mined tasks for this run")
     p.add_argument("--target-skill-path", default="",
                    help="explicit live SKILL.md path to evolve/stage/adopt")
+    p.add_argument("--no-evolve-memory", action="store_true",
+                   help="evolve the skill only; skip the memory doc (CLAUDE.md)")
     p.add_argument("--tasks-file", default="",
                    help="reviewed TaskRecord JSON file to replay instead of harvesting")
     p.add_argument("--progress", action="store_true",
@@ -135,6 +137,8 @@ def _cfg_from_args(args, task_meta: Dict[str, Any] | None = None) -> Any:
         if args.project and not os.path.isabs(path):
             path = os.path.join(os.path.abspath(args.project), path)
         overrides["target_skill_path"] = os.path.abspath(path)
+    if getattr(args, "no_evolve_memory", False):
+        overrides["evolve_memory"] = False
     if getattr(args, "progress", False):
         overrides["progress"] = True
     if getattr(args, "auto_adopt", False):

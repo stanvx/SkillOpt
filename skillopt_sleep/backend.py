@@ -1558,6 +1558,88 @@ class AzureResponsesBackend(AzureOpenAIBackend):
         return ""
 
 
+class HermesBackend(CliBackend):
+    """Drives the Hermes Agent CLI: ``hermes --profile <name> chat -Q -q "<prompt>"``.
+
+    Env overrides:
+      HERMES_BIN                     path to the hermes binary (default "hermes")
+      SKILLOPT_SLEEP_HERMES_PROFILE  profile name (falls back to HERMES_TARGET_PROFILE)
+      SKILLOPT_SLEEP_HERMES_MODEL    model hint passed through to CliBackend
+    """
+
+    name = "hermes"
+
+    def __init__(self, model: str = "", timeout: int = 180) -> None:
+        super().__init__(
+            model=model or os.environ.get("SKILLOPT_SLEEP_HERMES_MODEL", ""),
+            timeout=timeout,
+        )
+        self.hermes_bin = os.environ.get("HERMES_BIN", "hermes")
+        self.hermes_profile = os.environ.get(
+            "SKILLOPT_SLEEP_HERMES_PROFILE",
+            os.environ.get("HERMES_TARGET_PROFILE", "default"),
+        )
+
+    def _call(self, prompt: str, *, max_tokens: int = 1024) -> str:
+        cmd = [self.hermes_bin, "--profile", self.hermes_profile, "chat", "-Q", "-q", prompt]
+        # Run in a throwaway cwd so the agent can't pick up a project's files;
+        # the harvester filters these sessions out via the tempdir prefix.
+        with tempfile.TemporaryDirectory(prefix="skillopt_sleep_hermes_") as clean_cwd:
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    cwd=clean_cwd,
+                    env={**os.environ, "HERMES_NO_COLOR": "1"},
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.last_call_error = f"Hermes CLI call failed: {exc}"
+                return ""
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            self.last_call_error = stderr[:500] if stderr else f"Hermes CLI exited with code {proc.returncode}"
+            return ""
+        result = _strip_hermes_boilerplate((proc.stdout or "").strip())
+        self._tokens += len(prompt) // 4 + len(result) // 4
+        return result
+
+
+def _strip_hermes_boilerplate(raw: str) -> str:
+    """Drop CLI notices/warnings/tracebacks the Hermes binary prints around a reply.
+
+    Conservative: only a bare ``Traceback (most recent call last):`` header opens
+    traceback-skip mode, so a legitimate answer that merely starts with the word
+    "Exception" is preserved.
+    """
+    skip_prefixes = (
+        "Bitwarden Secrets Manager:",
+        "Warning: Unknown",
+        "session_id:",
+        "Exception ignored in:",
+    )
+    body: list[str] = []
+    in_traceback = False
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(stripped.startswith(p) for p in skip_prefixes):
+            continue
+        if stripped == "Traceback (most recent call last):":
+            in_traceback = True
+            continue
+        if in_traceback:
+            if stripped.startswith('File "') and ", line " in stripped:
+                continue
+            if re.match(r"^\w+(Error|Exception|Warning):", stripped):
+                continue
+            in_traceback = False
+        body.append(line)
+    return "\n".join(body).strip()
+
+
 def get_backend(
     name: str,
     *,
@@ -1586,6 +1668,8 @@ def get_backend(
             project_dir or os.getcwd(), ".skillopt-sleep-handoff"
         )
         return HandoffBackend(model=model, handoff_dir=hdir)
+    if n in {"hermes", "hermes_chat", "hermes_cli"}:
+        return HermesBackend(model=model)
     return MockBackend()
 
 

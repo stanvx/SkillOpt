@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -1483,6 +1484,198 @@ class TestDiagnosticsRedaction(unittest.TestCase):
         joined = "\n".join(cm.output)
         self.assertNotIn(secret, joined, "raw token leaked into the log line")
         self.assertIn("REDACTED", joined)
+
+
+class TestHermesHarvest(unittest.TestCase):
+    """Hermes harvesting via the `hermes sessions export` shim (mocked)."""
+
+    def _sessions_jsonl(self, sessions) -> str:
+        return "\n".join(json.dumps(s) for s in sessions) + "\n"
+
+    def _patch_export(self, jsonl):
+        return mock.patch("skillopt_sleep.harvest_hermes._run_export", return_value=jsonl)
+
+    def test_returns_empty_when_export_fails(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        with self._patch_export(None):
+            self.assertEqual(harvest_hermes(scope="all"), [])
+
+    def test_returns_empty_when_no_sessions(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        with self._patch_export(""):
+            self.assertEqual(harvest_hermes(scope="all"), [])
+
+    def test_builds_digest_from_export(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "source": "cli", "cwd": "/proj",
+            "started_at": 1000.0, "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "summarize the changelog"},
+                {"role": "assistant", "content": "done"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
+        self.assertEqual([d.session_id for d in digests], ["s1"])
+        self.assertEqual(digests[0].n_user_turns, 1)
+        self.assertEqual(digests[0].n_assistant_turns, 1)
+
+    def test_normalizes_structured_content(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello there"}]},
+                {"role": "assistant", "content": "hi"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
+        self.assertIn("hello there", " ".join(digests[0].user_prompts))
+
+    def test_includes_tool_names_only(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "search the web"},
+                {"role": "assistant", "content": "using search"},
+                {"role": "tool", "content": '{"result": "found 42"}', "tool_name": "search"},
+                {"role": "assistant", "content": "the answer is 42"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all")
+        self.assertIn("search", digests[0].tools_used)
+        self.assertEqual(digests[0].n_user_turns, 1)
+        self.assertEqual(digests[0].n_assistant_turns, 2)
+
+    def test_detects_feedback(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "fix the parser"},
+                {"role": "assistant", "content": "fixed it"},
+                {"role": "user", "content": "still broken, please fix properly"},
+                {"role": "assistant", "content": "ok now really fixed"},
+                {"role": "user", "content": "perfect, thanks"},
+                {"role": "assistant", "content": "welcome"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            sigs = harvest_hermes(scope="all")[0].feedback_signals
+        self.assertTrue(any(s.startswith("neg:") for s in sigs), sigs)
+        self.assertTrue(any(s.startswith("pos:") for s in sigs), sigs)
+
+    def test_redacts_secrets_defense_in_depth(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/p", "ended_at": 2000.0,
+            "messages": [
+                {"role": "user", "content": "use key sk-abc123def456ghi789jkl"},
+                {"role": "assistant", "content": "ok"},
+            ],
+        }])
+        with self._patch_export(jsonl):
+            joined = " ".join(harvest_hermes(scope="all")[0].user_prompts)
+        self.assertIn("[REDACTED_OPENAI_KEY]", joined)
+        self.assertNotIn("sk-abc123def456ghi789jkl", joined)
+
+    def test_skips_engine_sessions(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([{
+            "id": "e1", "cwd": "/tmp/skillopt_sleep_hermes_x", "ended_at": 2000.0,
+            "messages": [{"role": "user", "content": "internal"}, {"role": "assistant", "content": "x"}],
+        }])
+        with self._patch_export(jsonl):
+            self.assertEqual(harvest_hermes(scope="all"), [])
+
+    def test_scope_invoked_filters_by_project(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([
+            {"id": "in", "cwd": "/proj", "ended_at": 2001.0,
+             "messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]},
+            {"id": "out", "cwd": "/elsewhere", "ended_at": 2002.0,
+             "messages": [{"role": "user", "content": "c"}, {"role": "assistant", "content": "d"}]},
+        ])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="invoked", invoked_project="/proj")
+        self.assertEqual([d.session_id for d in digests], ["in"])
+
+    def test_limit_and_ordering(self):
+        from skillopt_sleep.harvest_hermes import harvest_hermes
+
+        jsonl = self._sessions_jsonl([
+            {"id": f"s{i}", "cwd": f"/p/{i}", "ended_at": 2000.0 + i,
+             "messages": [{"role": "user", "content": f"t{i}"}, {"role": "assistant", "content": "d"}]}
+            for i in range(5)
+        ])
+        with self._patch_export(jsonl):
+            digests = harvest_hermes(scope="all", limit=2)
+        # newest ended_at first
+        self.assertEqual([d.session_id for d in digests], ["s4", "s3"])
+
+    def test_harvest_sources_forwards_hermes(self):
+        from skillopt_sleep.config import load_config
+        from skillopt_sleep.harvest_sources import harvest_for_config
+
+        jsonl = self._sessions_jsonl([{
+            "id": "s1", "cwd": "/project", "ended_at": 2000.0,
+            "messages": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}],
+        }])
+        cfg = load_config(transcript_source="hermes", projects="all")
+        with self._patch_export(jsonl):
+            digests = harvest_for_config(cfg, limit=10)
+        self.assertEqual([d.session_id for d in digests], ["s1"])
+
+
+class TestHermesBackend(unittest.TestCase):
+    """HermesBackend dispatch and CLI output cleanup."""
+
+    def test_get_backend_dispatch(self):
+        from skillopt_sleep.backend import HermesBackend, get_backend
+
+        for alias in ("hermes", "hermes_chat", "hermes_cli"):
+            self.assertIsInstance(get_backend(alias), HermesBackend)
+
+    def test_strip_boilerplate_keeps_answer(self):
+        from skillopt_sleep.backend import _strip_hermes_boilerplate as strip
+
+        self.assertEqual(strip("Warning: Unknown flag\nHello world"), "Hello world")
+        self.assertEqual(
+            strip('Traceback (most recent call last):\n  File "x.py", line 1\nValueError: boom\nreal answer'),
+            "real answer",
+        )
+        # A bare "Exception" in prose must survive.
+        self.assertEqual(strip("Exception handling is the topic"), "Exception handling is the topic")
+
+    def test_no_evolve_memory_flag_sets_config(self):
+        import argparse
+        from skillopt_sleep.__main__ import _add_common
+
+        p = argparse.ArgumentParser()
+        _add_common(p)
+        self.assertTrue(p.parse_args(["--no-evolve-memory"]).no_evolve_memory)
+        self.assertFalse(p.parse_args([]).no_evolve_memory)
+
+    def test_call_captures_error_on_missing_binary(self):
+        from skillopt_sleep.backend import HermesBackend
+
+        b = HermesBackend()
+        b.hermes_bin = "hermes-does-not-exist-xyz"
+        self.assertEqual(b._call("hi"), "")
+        self.assertTrue(b.last_call_error)
 
 
 if __name__ == "__main__":

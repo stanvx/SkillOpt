@@ -54,7 +54,8 @@ skillopt-sleep schedule     # install a nightly cron entry for this project
 
 The per-agent integrations below still come from the repo; the CLI above is the
 standalone, pip-only way to run a cycle. Claude Code, Codex, Copilot, and Devin wrap
-the shared engine. OpenClaw is a separate reference adaptation and has its own setup.
+the shared engine; Hermes Agent is wired into the core engine directly (`--source hermes`
+/ `--backend hermes`). OpenClaw is a separate reference adaptation and has its own setup.
 
 One engine, thin per-agent shells (see [`plugins/`](https://github.com/microsoft/SkillOpt/tree/main/plugins)):
 
@@ -64,6 +65,7 @@ One engine, thin per-agent shells (see [`plugins/`](https://github.com/microsoft
 | **Codex** | [`plugins/codex`](https://github.com/microsoft/SkillOpt/tree/main/plugins/codex) | `bash plugins/codex/install.sh` → `skillopt-sleep` skill |
 | **Copilot** | [`plugins/copilot`](https://github.com/microsoft/SkillOpt/tree/main/plugins/copilot) | register `plugins/copilot/mcp_server.py` as an MCP server |
 | **Devin** | [`plugins/devin`](https://github.com/microsoft/SkillOpt/tree/main/plugins/devin) | register `plugins/devin/mcp_server.py` as an MCP server |
+| **Hermes Agent** | [`plugins/hermes`](https://github.com/microsoft/SkillOpt/tree/main/plugins/hermes) | `--source hermes` / `--backend hermes` (core), or register `plugins/hermes/mcp_server.py` |
 | **OpenClaw** | [`plugins/openclaw`](https://github.com/microsoft/SkillOpt/tree/main/plugins/openclaw) | adapt the reference wrapper and paths for your installation |
 
 To use DeepSeek, vLLM, Ollama, or another Chat Completions server, see
