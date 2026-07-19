@@ -1660,6 +1660,15 @@ class TestHermesBackend(unittest.TestCase):
         # A bare "Exception" in prose must survive.
         self.assertEqual(strip("Exception handling is the topic"), "Exception handling is the topic")
 
+    def test_no_evolve_memory_flag_sets_config(self):
+        import argparse
+        from skillopt_sleep.__main__ import _add_common
+
+        p = argparse.ArgumentParser()
+        _add_common(p)
+        self.assertTrue(p.parse_args(["--no-evolve-memory"]).no_evolve_memory)
+        self.assertFalse(p.parse_args([]).no_evolve_memory)
+
     def test_call_captures_error_on_missing_binary(self):
         from skillopt_sleep.backend import HermesBackend
 

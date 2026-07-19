@@ -42,6 +42,15 @@ python -m skillopt_sleep adopt
 Or wire the MCP server (`mcp_server.py`) into your client; cycle tools default to
 `backend=hermes` / `source=hermes`.
 
+## What it evolves
+
+Skill-only, written where Hermes discovers global skills:
+`~/.hermes/skills/skillopt-sleep-learned/SKILL.md` (via `--target-skill-path`).
+The Hermes path defaults to `--no-evolve-memory`: the engine's memory doc is a
+project `CLAUDE.md`, which Hermes does not read (it manages memory itself via
+`SOUL.md`/`MEMORY.md` and its curator). Proper `AGENTS.md` support awaits a future
+engine `memory_filename` option.
+
 ## Configuration
 
 `HERMES_HOME` (state DB dir, default `~/.hermes`), `HERMES_BIN` (default `hermes`),

@@ -83,12 +83,26 @@ _TOOL_SCHEMA = {
 _HERMES_ACTIONS = {"run", "dry-run", "harvest"}
 
 
+def _default_skill_path() -> str:
+    """Where Hermes discovers global skills — evolve the learned skill there."""
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return os.path.join(home, "skills", "skillopt-sleep-learned", "SKILL.md")
+
+
 def _run_engine(action: str, args: dict) -> str:
     py = sys.executable or "python3"
     cmd = [py, "-m", "skillopt_sleep", action]
-    # Default to the Hermes backend/source for cycle actions unless overridden.
+    # Default to the Hermes backend/source for cycle actions unless overridden,
+    # target the Hermes global skills dir, and evolve skill-only (Hermes manages
+    # its own memory via SOUL.md/MEMORY.md; the engine's CLAUDE.md is ignored).
     if action in _HERMES_ACTIONS:
-        args = {"backend": "hermes", "source": "hermes", **args}
+        args = {
+            "backend": "hermes",
+            "source": "hermes",
+            "target_skill_path": _default_skill_path(),
+            "no_evolve_memory": True,
+            **args,
+        }
     # String-valued flags
     for flag, key in [
         ("--project", "project"), ("--backend", "backend"),
@@ -111,7 +125,7 @@ def _run_engine(action: str, args: dict) -> str:
     # Boolean flags
     for flag, key in [
         ("--progress", "progress"), ("--auto-adopt", "auto_adopt"),
-        ("--json", "json"),
+        ("--json", "json"), ("--no-evolve-memory", "no_evolve_memory"),
     ]:
         if args.get(key):
             cmd.append(flag)

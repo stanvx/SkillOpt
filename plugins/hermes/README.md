@@ -55,6 +55,29 @@ the server directly: `python plugins/hermes/mcp_server.py`. Cycle actions defaul
 | `SKILLOPT_SLEEP_HERMES_PROFILE` | Hermes profile for cycle calls | `default` |
 | `SKILLOPT_SLEEP_HERMES_MODEL` | Optional model hint | (unset) |
 
+## What gets evolved (and why)
+
+The Hermes integration evolves **the skill only**, written to where Hermes actually
+discovers global skills:
+
+```
+~/.hermes/skills/skillopt-sleep-learned/SKILL.md
+```
+
+The MCP server sets `--target-skill-path` there by default. Run it manually with:
+
+```bash
+python -m skillopt_sleep run --backend hermes --source hermes --no-evolve-memory \
+  --target-skill-path ~/.hermes/skills/skillopt-sleep-learned/SKILL.md
+```
+
+**Memory is left to Hermes.** The shared engine's memory evolution targets a project
+`CLAUDE.md`, which Hermes does not read — Hermes manages its own memory via `SOUL.md`
+/ `MEMORY.md` and its `curator`/`learning` subsystems. So the Hermes path defaults to
+`--no-evolve-memory` (skill-only) rather than staging a doc Hermes would ignore. Proper
+`AGENTS.md` memory support depends on a future engine `memory_filename` option and is
+intentionally out of scope here.
+
 ## Safety
 
 Sessions are harvested read-only and secrets are redacted before anything is persisted.
