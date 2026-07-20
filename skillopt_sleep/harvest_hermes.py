@@ -31,6 +31,13 @@ from skillopt_sleep.types import SessionDigest
 HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 
 
+class HarvestExportError(RuntimeError):
+    """The ``hermes sessions export`` subprocess failed (missing binary, non-zero
+    exit, or timeout). Distinct from a *successful but empty* export so callers
+    don't advance the harvest window past sessions they never actually scanned.
+    """
+
+
 def _warn(msg: str) -> None:
     print(f"[sleep] hermes harvest: {msg}", file=sys.stderr)
 
@@ -222,7 +229,10 @@ def harvest_hermes(
         min_messages=1,
     )
     if raw is None:
-        return []
+        # Export failed (see the [sleep] warning already printed by _run_export).
+        # Raise instead of returning [] so the caller keeps the harvest window
+        # open and retries these sessions next run, rather than skipping them.
+        raise HarvestExportError("hermes sessions export failed")
 
     digests: List[SessionDigest] = []
     for line in raw.splitlines():

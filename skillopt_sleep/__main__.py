@@ -30,6 +30,7 @@ from typing import Any, Dict
 
 from skillopt_sleep.config import load_config
 from skillopt_sleep.cycle import run_sleep_cycle
+from skillopt_sleep.harvest_hermes import HarvestExportError
 from skillopt_sleep.harvest_sources import harvest_for_config
 from skillopt_sleep.mine import mine
 from skillopt_sleep.staging import adopt as adopt_staging
@@ -255,6 +256,7 @@ def _handoff_mine_and_pin(cfg, args, backend, snapshot: str, dry: bool):
 
     digests_path = os.path.join(backend.handoff_dir, "digests.json")
     digests = None
+    harvest_failed = False
     if os.path.exists(digests_path):
         try:
             with open(digests_path, encoding="utf-8") as f:
@@ -275,7 +277,13 @@ def _handoff_mine_and_pin(cfg, args, backend, snapshot: str, dry: bool):
             since = _now_iso(time.time() - lookback_hours * 3600)
         max_tasks = cfg.get("max_tasks_per_night", 40)
         session_limit = cfg.get("max_sessions_per_night", 0) or max_tasks * 3
-        digests = harvest_for_config(cfg, since_iso=since, limit=session_limit)
+        try:
+            digests = harvest_for_config(cfg, since_iso=since, limit=session_limit)
+        except HarvestExportError as exc:
+            print(f"[sleep] harvest export failed: {exc} — window not advanced",
+                  file=sys.stderr)
+            digests = []
+            harvest_failed = True
         os.makedirs(backend.handoff_dir, exist_ok=True)
         with open(digests_path, "w", encoding="utf-8") as f:
             json.dump(_redact_deep([d.to_dict() for d in digests]), f,
@@ -315,9 +323,10 @@ def _handoff_mine_and_pin(cfg, args, backend, snapshot: str, dry: bool):
         return _flush_handoff(backend, args), None
     if not tasks:
         print("[sleep] handoff: no tasks mined — nothing to consolidate")
-        if not dry:
+        if not dry and not harvest_failed:
             # Advance the harvest window like run_sleep_cycle's no-tasks
             # branch, or every later run re-scans the same stale window.
+            # Skip on export failure so we retry those sessions next run.
             state.set_last_harvest(project, started)
             state.save()
         return 0, None
@@ -435,7 +444,11 @@ def cmd_harvest(args) -> int:
     candidate_limit = max_tasks
     if cfg.get("target_task_filter", True) and target_skill_text:
         candidate_limit = max(max_tasks, max_tasks * 3)
-    digests = harvest_for_config(cfg, limit=session_limit)
+    try:
+        digests = harvest_for_config(cfg, limit=session_limit)
+    except HarvestExportError as exc:
+        print(f"[sleep] harvest export failed: {exc}", file=sys.stderr)
+        return 1
     tasks = mine(
         digests,
         max_tasks=max_tasks,

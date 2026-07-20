@@ -1495,11 +1495,14 @@ class TestHermesHarvest(unittest.TestCase):
     def _patch_export(self, jsonl):
         return mock.patch("skillopt_sleep.harvest_hermes._run_export", return_value=jsonl)
 
-    def test_returns_empty_when_export_fails(self):
-        from skillopt_sleep.harvest_hermes import harvest_hermes
+    def test_raises_when_export_fails(self):
+        # Export failure must be distinguishable from an empty result so the
+        # caller keeps the harvest window open instead of skipping sessions.
+        from skillopt_sleep.harvest_hermes import HarvestExportError, harvest_hermes
 
         with self._patch_export(None):
-            self.assertEqual(harvest_hermes(scope="all"), [])
+            with self.assertRaises(HarvestExportError):
+                harvest_hermes(scope="all")
 
     def test_returns_empty_when_no_sessions(self):
         from skillopt_sleep.harvest_hermes import harvest_hermes

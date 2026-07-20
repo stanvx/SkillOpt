@@ -17,6 +17,7 @@ from typing import List, Optional
 from skillopt_sleep.backend import Backend, get_backend
 from skillopt_sleep.config import SleepConfig, load_config
 from skillopt_sleep.dream import dream_consolidate
+from skillopt_sleep.harvest_hermes import HarvestExportError
 from skillopt_sleep.harvest_sources import harvest_for_config
 from skillopt_sleep.memory import ensure_skill_scaffold
 from skillopt_sleep.mine import mine
@@ -143,6 +144,7 @@ def run_sleep_cycle(
 
     # ── 1+2. harvest + mine (unless seed_tasks injected) ─────────────────
     digests: List[SessionDigest] = []
+    harvest_failed = False
     if seed_tasks is not None:
         tasks = seed_tasks
         n_sessions = 0
@@ -167,11 +169,16 @@ def run_sleep_cycle(
             cfg,
             f"harvest start: source={cfg.get('transcript_source')} max_sessions={max_sessions}",
         )
-        digests = harvest_for_config(
-            cfg,
-            since_iso=since,
-            limit=max_sessions,
-        )
+        try:
+            digests = harvest_for_config(
+                cfg,
+                since_iso=since,
+                limit=max_sessions,
+            )
+        except HarvestExportError as exc:
+            digests = []
+            harvest_failed = True
+            _progress(cfg, f"harvest failed: {exc} — window not advanced, will retry")
         n_sessions = len(digests)
         _progress(cfg, f"harvest done: sessions={n_sessions}")
         # When a real backend is configured, use it to mine checkable tasks from
@@ -212,8 +219,11 @@ def run_sleep_cycle(
 
     if not tasks:
         report.ended_at = _now_iso(clock)
-        report.notes.append("no tasks mined — nothing to consolidate")
-        state.set_last_harvest(project, started)
+        if harvest_failed:
+            report.notes.append("harvest export failed — window not advanced")
+        else:
+            report.notes.append("no tasks mined — nothing to consolidate")
+            state.set_last_harvest(project, started)
         state.record_night({"night": night, "accepted": False, "n_tasks": 0})
         if not dry_run:
             state.save()
